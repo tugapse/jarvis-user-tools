@@ -3,7 +3,8 @@ Project Hub user tools: read and change the user's Kanban boards (projects -> co
 through the Project Hub HTTP API (see project-hub/docs/API.md).
 
 Configuration:
-  PROJECT_HUB_URL    base URL, default http://rpi/hub/ (the hub on the Raspberry Pi)
+  PROJECT_HUB_URL    base URL of the hub, e.g. http://localhost:8000/. Otherwise read from
+                     ~/.config/project-hub/url, which project_hub_login(url=...) writes.
   PROJECT_HUB_TOKEN  API token; otherwise read from ~/.config/project-hub/token (shared with the
                      reference client). Get one with the project_hub_login tool.
 
@@ -24,6 +25,7 @@ from ai.tools import ToolCategory, tool
 
 _CONFIG_DIR = Path(os.getenv("XDG_CONFIG_HOME", Path.home() / ".config")) / "project-hub"
 _TOKEN_FILE = _CONFIG_DIR / "token"
+_URL_FILE = _CONFIG_DIR / "url"
 _PENDING_FILE = _CONFIG_DIR / "pending_device_code.json"
 _WRITE_LOCK = threading.Lock()
 _STATUSES = ("not_started", "active", "archived")
@@ -38,8 +40,33 @@ class _ApiError(Exception):
         super().__init__(f"HTTP {status}: {body}")
 
 
+class _NotConfigured(Exception):
+    pass
+
+
+def _normalize_url(url: str) -> str:
+    url = str(url or "").strip()
+    if not url.lower().startswith(("http://", "https://")):
+        raise ValueError(f"Not a valid Project Hub URL: '{url}'. It must start with http:// or https://.")
+    return url.rstrip("/") + "/"
+
+
+def _saved_url() -> str:
+    return _URL_FILE.read_text().strip() if _URL_FILE.exists() else ""
+
+
 def _base_url() -> str:
-    return os.getenv("PROJECT_HUB_URL", "http://rpi/hub/").rstrip("/") + "/"
+    url = os.getenv("PROJECT_HUB_URL", "").strip() or _saved_url()
+    if not url:
+        raise _NotConfigured()
+    return _normalize_url(url)
+
+
+def _write_private(path: Path, text: str) -> None:
+    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
 
 
 def _load_token() -> str:
@@ -76,6 +103,9 @@ def _request(method: str, path: str, body=None, auth: bool = True):
 
 def _error(e: Exception) -> dict:
     """Turns an exception into a FAILED result with advice the model can act on."""
+    if isinstance(e, _NotConfigured):
+        return {"status": "FAILED", "error": "The Project Hub URL is not set. Ask the user where their Project Hub "
+                                             "runs and call project_hub_login with url=<that address>."}
     if isinstance(e, _ApiError):
         if e.status == 401:
             return {"status": "FAILED", "error": "Not logged in to Project Hub (token missing, invalid or revoked). "
@@ -87,7 +117,8 @@ def _error(e: Exception) -> dict:
         return {"status": "FAILED", "error": f"Project Hub returned HTTP {e.status}: {detail}"}
     if isinstance(e, urllib.error.URLError):
         return {"status": "FAILED", "error": f"Cannot reach Project Hub at {_base_url()}: {e.reason}. "
-                                             "Check that the server is running and PROJECT_HUB_URL is right."}
+                                             "Check that the server is running and the URL is right "
+                                             "(change it with project_hub_login url=...)."}
     return {"status": "FAILED", "error": str(e)}
 
 
@@ -227,10 +258,27 @@ def project_hub_login(**kwargs) -> dict:
     First call: returns a URL and a code; show both to the user and ask them to approve in the
     browser. Then call this tool again (no arguments) to finish; repeat while it says 'pending'.
 
+    Args:
+        url (string, optional): Where the user's Project Hub runs, e.g. 'http://localhost:8000/'.
+            Needed the first time; it is saved for later calls. Giving a new one logs out.
+
     Returns:
         state: 'logged_in', 'pending' (with url and user_code to show the user) or an error.
     """
     try:
+        if kwargs.get("url"):
+            url = _normalize_url(kwargs["url"])
+            env_url = os.getenv("PROJECT_HUB_URL", "").strip()
+            if env_url and _normalize_url(env_url) != url:
+                return {"status": "FAILED", "error": f"PROJECT_HUB_URL is set to {env_url} and takes priority. "
+                                                     "Ask the user to change or unset it."}
+            if url != (_normalize_url(_saved_url()) if _saved_url() else ""):
+                _write_private(_URL_FILE, url + "\n")
+                # A token belongs to one hub: forget the old login.
+                _TOKEN_FILE.unlink(missing_ok=True)
+                _PENDING_FILE.unlink(missing_ok=True)
+        base = _base_url()
+
         if _PENDING_FILE.exists():
             pending = json.loads(_PENDING_FILE.read_text())
             if time.time() < pending["expires_at"]:
@@ -251,10 +299,7 @@ def project_hub_login(**kwargs) -> dict:
                         raise
                 else:
                     _PENDING_FILE.unlink(missing_ok=True)
-                    _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-                    fd = os.open(_TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                    with os.fdopen(fd, "w") as f:
-                        f.write(token)
+                    _write_private(_TOKEN_FILE, token)
                     me = _request("GET", "api/auth/me")
                     return {"status": "SUCCESS", "state": "logged_in", "username": me.get("username")}
             _PENDING_FILE.unlink(missing_ok=True)
@@ -270,15 +315,12 @@ def project_hub_login(**kwargs) -> dict:
         start = _request("POST", "api/auth/device/code",
                          {"client_name": f"JARVIS on {socket.gethostname()}"[:100]}, auth=False)
         url = start["verification_uri_complete"]
-        if not url.startswith(_base_url()):
+        if not url.startswith(base):
             # The hub doesn't know it sits behind a proxy path (e.g. /hub/): build the URL from ours.
-            url = f"{_base_url()}?user_code={start['user_code']}"
-        _CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        fd = os.open(_PENDING_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            json.dump({"device_code": start["device_code"], "user_code": start["user_code"],
-                       "url": url,
-                       "expires_at": time.time() + start["expires_in"]}, f)
+            url = f"{base}?user_code={start['user_code']}"
+        _write_private(_PENDING_FILE, json.dumps({"device_code": start["device_code"],
+                                                  "user_code": start["user_code"], "url": url,
+                                                  "expires_at": time.time() + start["expires_in"]}))
         try:
             webbrowser.open(url)
         except Exception:

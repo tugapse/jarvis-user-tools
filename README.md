@@ -32,7 +32,7 @@ tasks, checklists, columns and project status.
 
 | Tool | What it does |
 |---|---|
-| `project_hub_login` | Logs in with a device code: the first call returns a URL and a code to open in the browser, the second call finishes. |
+| `project_hub_login` | Logs in with a device code: the first call returns a URL and a code to open in the browser, the second call finishes. Pass `url=` the first time to say where your hub runs. |
 | `list_projects` | Lists projects with their status and the number of tasks per column. |
 | `get_project` | Shows one project's columns, tasks and checklists. |
 | `create_project` | Creates a project with the default columns. |
@@ -47,8 +47,9 @@ Projects can be named by id, by exact name or by part of the name (case-insensit
 
 Config:
 
-- `PROJECT_HUB_URL`: where your Project Hub runs. Set it, because the current default
-  (`http://rpi/hub/`) is the address on my own network.
+- Hub address: the first time, call `project_hub_login` with `url=` (e.g. `http://localhost:8000/`).
+  It is saved in `~/.config/project-hub/url`. `PROJECT_HUB_URL` overrides it. Giving a new
+  address logs you out of the old one.
 - Token: `PROJECT_HUB_TOKEN`, or the file `~/.config/project-hub/token` that
   `project_hub_login` writes.
 
