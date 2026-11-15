@@ -1,13 +1,28 @@
 # jarvis-user-tools
 
-These are my user tools for [JARVIS](https://github.com/tugapse/ai), kept here so every machine
-I use has the same ones.
+My own tools for [JARVIS AI](https://github.com/tugapse/ai), my personal assistant.
 
-A JARVIS user tool is a Python file in `~/Ai/user/tools/` with `@tool` functions grouped in a
-`ToolCategory`. The function's docstring is what the model reads, so it is written as
-instructions for the model.
+---
+
+## Why
+
+JARVIS ships with the tools everyone needs: files, search, shell, web, notifications, knowledge,
+memory. Everything else is personal. When I want JARVIS to do something for *me*, like move a card on
+my Kanban board, I write a user tool for it.
+
+Those tools **aren't part of JARVIS** and don't ship with it. They're built for my setup and my
+servers, and they change whenever I need something new. They live here so every machine I use has
+the same ones, and they're public in case they're useful as examples, or as tools, for someone else.
+
+## How JARVIS uses them
+
+A user tool is a Python file in `~/Ai/user/tools/` with `@tool` functions grouped in a
+`ToolCategory`. The model only sees the docstring, so it's written as instructions for the model.
+How to write one: [Writing your own tools](https://github.com/tugapse/ai/blob/master/guide/04-tools.md#writing-your-own-tools).
 
 ## Install
+
+I keep this repo next to JARVIS and link the files, so a `git pull` updates the tools:
 
 ```bash
 git clone https://github.com/tugapse/jarvis-user-tools ~/Code/jarvis-user-tools
@@ -15,13 +30,14 @@ mkdir -p ~/Ai/user/tools
 ln -s ~/Code/jarvis-user-tools/tools/*.py ~/Ai/user/tools/
 ```
 
-With symlinks, `git pull` updates the tools. Copy the files instead if you want to change them
-locally.
+Copy the files instead if you want to change them.
 
-JARVIS only gives an agent the tools its pipeline lists. To use these tools, copy the pipeline
-(e.g. `default.json`) to `~/Ai/user/pipelines/` and add the tool names to the agent's `tools`
-list. To make a tool ask for approval before it runs, add its name to `HIL_TOOLS` in
-`~/Ai/config.json`.
+Two things to know:
+- JARVIS only gives an agent the tools its pipeline lists. Copy the pipeline (e.g. `default.json`)
+  to `~/Ai/user/pipelines/` and add the tool names to the agent's `tools` list.
+- Tools that change things should ask first: add them to `HIL_TOOLS` in `~/Ai/config.json`.
+
+---
 
 ## Tools
 
@@ -58,3 +74,11 @@ a browser, reload it before editing there, or the browser's next save will undo 
 change.
 
 Suggested `HIL_TOOLS`: `delete_task`, `set_project_status`.
+
+## License
+
+MIT
+
+## Contact
+
+**Maintainer:** Fabio Almeida · tugapse@gmail.com
